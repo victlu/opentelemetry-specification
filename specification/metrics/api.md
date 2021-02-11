@@ -149,8 +149,10 @@ instruments that support a single method each with fixed interpretation.
 
 All measurements captured by the API are associated with the
 instrument used to make the measurement, thus giving the measurement its semantic properties.
-Instruments are created and defined through calls to a `Meter` API,
-which is the user-facing entry point to the SDK.
+Instruments are created and defined from within the scope of a `MetricSource` API.
+The SDK will attach to `MetricSources` (directly and/or by name) thus linking instruments' 
+captured measurements to SDK's processing, aggregation, and export capabilities.
+
 
 Instruments are classified in several ways that distinguish them from
 one another.
@@ -213,29 +215,34 @@ other measurements having exactly the same label set, which enables
 significant optimizations.  Read more about [combining measurements
 through aggregation](#aggregations) below.
 
-### Meter Interface
+### MetricSource Interface
 
-The API defines a `Meter` interface.  This interface consists of a set
-of instrument constructors, and a facility for capturing batches of
-measurements in a semantically atomic way.
+The API defines an interface (i.e. `MetricSource.GetSource()`) to retrieve a global 
+*Default* instance or a *Named* instance of `MetricSource`.  Each `MetricSource` 
+contains a collection of instruments.  Thus, all instruments are constructed with 
+or from a `MetricSource` (as dictated per language implementation).
 
-There is a global `Meter` instance available for use that facilitates
-automatic instrumentation for third-party code.  Use of this instance
-allows code to statically initialize its metric instruments, without
-explicit dependency injection.  The global `Meter` instance acts as a
-no-op implementation until the application initializes a global
-`Meter` by installing an SDK either explicitly, through a service
-provider interface, or other language-specific support.  Note that it
-is not necessary to use the global instance: multiple instances of the
-OpenTelemetry SDK may run simultaneously.
+As an obligatory step, Instrumenting library should obtain a `MetricSource` per its 
+fully qualified name (plus optional version) when creating instruments. 
+The library name is meant to be used for identifying instrumentation produced from 
+that library, for such purposes as disabling instrumentation, configuring aggregation, 
+and applying sampling policies.  See the specification on 
+[TracerProvider](../trace/api.md#tracerprovider) for more details.
 
-As an obligatory step, the API requires the caller to provide the name of the
-instrumenting library (optionally, the version) when obtaining a `Meter`
-implementation.  The library name is meant to be used for identifying
-instrumentation produced from that library, for such purposes as disabling
-instrumentation, configuring aggregation, and applying sampling policies.  See
-the specification on [TracerProvider](../trace/api.md#tracerprovider) for more
-details.
+The *Default* instance of `MetricSource` is available for use to facilitate creating
+instruments that spans multiple libraries or otherwise carry a "global" context.
+
+`MetricSource` and its instruments are no-op implementations until it is attached 
+or configured to an installed OpenTelemetry SDK.  Also, multiple SDKs may attach 
+to the same `MetricSource` simultaneously.
+
+### Batch Inteface
+
+Facilities are provided for capturing batches of measurements in a semantically atomic way.
+
+Semantically atomic may include:
+- All measurements are presented in a singular "logical" transaction
+- All measurements have the same exact timestamp
 
 ### Aggregations
 
@@ -333,62 +340,79 @@ Synchronous events have one additional property, the distributed
 [Context](../context/context.md) (containing Span, Baggage, etc.)
 that was active at the time.
 
-## Meter provider
+## Obtaining a MetricSource
 
-A concrete `MeterProvider` implementation can be obtained by initializing and
-configuring an OpenTelemetry Metrics SDK.  This document does not
-specify how to construct an SDK, only that they must implement the
-`MeterProvider`.  Once configured, the application or library chooses
-whether it will use a global instance of the `MeterProvider`
-interface, or whether it will use dependency injection for greater
-control over configuring the provider.
+The `MetricSource` interface (part of API) provides a strong seperation between 
+API and SDK. This separation allows instrumenting libraries to not require any references 
+to any SDK during build or deploy.  Instrumenting libraries continues to be backward 
+and forward compatible with Applications using different implementation of OpenTelemetry 
+SDKs.  To tie API and SDK together, an OpenTelemetry Metrics SDK instance may 
+attach to or configure to reference some `MetricSource` instances.
 
-### Obtaining a Meter
+A `MetricSource` can be reference by *Name* instance or by the *Default* instance.
+The `MetricSource` interface should provide a way to get a *Name* instance that
+is generally expected to be used as a singleton.  API Implementations SHOULD provide
+access to a single global *Default* `MetricSource` instance.  
 
-New `Meter` instances can be created via a `MeterProvider` and its
-`GetMeter(name, version)` method.  `MeterProvider`s are generally expected to
-be used as singletons.  Implementations SHOULD provide a single global
-default `MeterProvider`. The `GetMeter` method expects two string
-arguments:
+A `MetricSource` instance can generally be obtained through a global object / static class
+via a `GetSource(...)` function.  It is generally expects to take two string arguments:
 
-- `name` (required): This name must identify the instrumentation library (e.g. `io.opentelemetry.contrib.mongodb`)
-  and *not* the instrumented library.
-  In case an invalid name (null or empty string) is specified, a working default `Meter` implementation is returned as a fallback
-  rather than returning null or throwing an exception.
-  A `MeterProvider` could also return a no-op `Meter` here if application owners configure the SDK to suppress telemetry produced by this library.
-- `version` (optional): Specifies the version of the instrumentation library (e.g. `1.0.0`).
+- `Name` (required): This name must identify the instrumentation library 
+  (e.g. `io.opentelemetry.contrib.mongodb`) and *not* the instrumented application/library.
 
-Each distinctly named `Meter` establishes a separate namespace for its
+  In case an invalid name (or null, or empty string) is specified, the *Default*
+  `MetricSource` is returned as a fallback rather than returning null or throwing an exception.
+
+  When the *Name* instance is not found or does not already exists, a new instance with
+  the *Name* is automatically created and returned.
+
+  Multiple calls with "equal" *Name* will return the same singleton instance of `MetricSource`.
+
+  When `Version` is ommitted, equality of *Name* is based on SemVer semantics.  Further
+  clarification may be found [here](TBD).
+
+- `Version` (optional): Specifies the version of the instrumentation library (e.g. `1.0.0`).
+
+  ```
+    // Get Default MetricSource instance
+    MetricSource source1 = MetricSource.GetSource();
+
+    // Get a Name MetricSource instance
+    MetricSource source2 = MetricSource.GetSource("io.opentelemetry.contrib.mongodb", "1.0.0");
+  ```
+
+Each distinctly named `MetricSource` establishes a separate namespace for its
 metric instruments, making it possible for multiple instrumentation
 libraries to report the metrics with the same instrument name used by
-other libraries.  The name of the `Meter` is explicitly not intended
-to be used as part of the instrument name, as that would prevent
-instrumentation libraries from capturing metrics by the same name.
+other libraries.
 
-### Global Meter provider
+This document does not specify how to construct an SDK, only that they MUST implement
+a way to configure or attach to `MetricSource` instances.  A common pattern could
+use dependency injection for greater control over configuring the SDK.
 
-Use of a global instance may be seen as an anti-pattern in many
+### Obtaining an Instrument
+
+New instruments can be created with a reference to a `MetricSource` instance.
+
+```
+  // Create new instrument from a source
+  Counter counter1 = source.CreateCounter(...);
+
+  // Create new instrument with a source
+  Counter counter2 = CreateCounter(source, ...);
+```
+
+### Global MetricSource source
+
+Use of the *Default* global instance may be seen as an anti-pattern in many
 situations, but in most cases it is the correct pattern for telemetry
 data, in order to combine telemetry data from inter-dependent
 libraries _without use of dependency injection_.  OpenTelemetry
 language APIs SHOULD offer a global instance for this reason.
-Languages that offer a global instance MUST ensure that `Meter`
-instances allocated through the global `MeterProvider` and instruments
-allocated through those `Meter` instances have their initialization
-deferred until the a global SDK is first initialized.
+Languages that offer a global instance MUST ensure that instruments
+allocated through those `MetricSource` instances have their initialization
+deferred until the attached SDK is first initialized.
 
-#### Get the global MeterProvider
-
-Since the global `MeterProvider` is a singleton and supports a single
-method, callers can obtain a global `Meter` using a global `GetMeter`
-call.  For example, `global.GetMeter(name, version)` calls `GetMeter`
-on the global `MeterProvider` and returns a named `Meter` instance.
-
-#### Set the global MeterProvider
-
-A global function installs a MeterProvider as the global SDK.  For
-example, use `global.SetMeterProvider(MeterProvider)` to install the
-SDK after it is initialized.
 
 ## Instrument properties
 
@@ -410,15 +434,19 @@ to the following syntax:
 3. The first character must be non-numeric, non-space, non-punctuation
 4. Subsequent characters must belong to the alphanumeric characters, '\_', '.', and '-'.
 
-Metric instrument names belong to a namespace, established by the the
-associated `Meter` instance.  `Meter` implementations MUST return an
-error when multiple instruments are registered by the same name.
+Metric instrument names belong to a namespace, established by the associated 
+`MetricSource` instance.
+
+In case where multiple instruments are created with the same name with the same 
+`MetricSource` instance, the API will treat each instrument independantly.  However,
+the SDK must decide on how best to merge (or not merge) those measurements as 
+dictated by proper semantics and configuration.
 
 TODO: [The following paragraph is a placeholder for a more-detailed
 document that is needed.](https://github.com/open-telemetry/opentelemetry-specification/issues/600)
 
 Metric instrument names SHOULD be semantically meaningful, independent
-of the originating Meter name.  For example, when instrumenting an
+of the originating `MetricSource` name.  For example, when instrumenting an
 http server library, "latency" is not an appropriate instrument name,
 as it is too generic.  Instead, as an example, we should favor a name
 like "http\_request\_latency", as it would inform the viewer of the
