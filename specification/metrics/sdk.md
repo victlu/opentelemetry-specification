@@ -91,20 +91,21 @@ Diagram:
 
 ```text
 
-               +---------------------+
-               | [Aggregator]        |
-               |                     |
-  Measurements |                     |
-  -------------> "Aggregate"         |
-               |      |              |
-               | +----V------------+ |
-               | | In-Memory State | |
-               | +-------+---------+ |
-               |         |           | Pre-Aggregated
-               |         V           | Metrics
-               |         "Collect"   +--------------->
-               |                     |
-               +---------------------+
+                 +---------------------+
+                 | Aggregator          |
+                 |                     |
+ [Measurements]------> "Aggregate"     |
+                 |         |           |
+                 | +-------V---------+ |
+                 | |                 | |
+                 | | In-Memory State | |
+                 | |                 | |
+                 | +-------+---------+ |
+                 |         |           |
+                 |         V           |
+                 |      "Collect" +------[Pre-Aggregated Metrics]-->
+                 |                     |
+                 +---------------------+
 ```
 
 An `Aggregator` MUST provide an interface to "aggregate" [Measurement](./api.md#measurement)
@@ -120,27 +121,6 @@ provide consideration and control for memory availability and usage.
 An `Aggregator` MUST have access to or given the `View` configuration so it can
 be properly configure. e.g. For Monoticity and/or Temporality.
 
-Example: SDK expand combination of attribute keys/values of each measurement
-and direct each distinct combination to a different instance of an aggregator.
-
-```text
-                   "Aggregate"        "Collect"
-
-Measurement #1:
-                        +---------------+
-  B=Y ----------------->| Aggregator #1 |----> [B=Y] Count=1
-                        +---------------+
-  A=X -----------+
-                  \     +---------------+
-                    +-->| Aggregator #2 |----> [A=X] Count=2
-Measurement #2:    /    +---------------+
-                  /
-  A=X ----------+
-                        +---------------+
-  B=Z ----------------->| Aggregator #3 |----> [B=Z] Count=1
-                        +---------------+
-```
-
 SDK MUST provide aggregators to support the default aggregator configuration
 per instrument kind. e.g. A "Sum" aggregator to compute the sum "aggregate" for
 counter instruments and a "Histogram" aggregator for histogram instruments.
@@ -154,7 +134,7 @@ and is default aggregator for the following instruments.
 
 Last Value Aggregator stores the following in memory:
 
-* Last Value (from latest Measurement given.)
+* Last Value (latest Measurement given.)
 
 ### Sum Aggregator
 
@@ -172,7 +152,7 @@ Temporality.
 Sum Aggregator stores the following in memory:
 
 * Time window (e.g. start time, end time)
-* Total (sum of Measurements per Monoticity and Temporality configuration.)
+* Sum (sum of Measurements per Monoticity and Temporality configuration.)
 
 ### Histogram Aggregator
 
@@ -188,8 +168,53 @@ Histogram Aggregator stores the following in memory:
 * Time window (e.g. start time, end time)
 * Count
 * Sum
-* Bucket Counts
-* Explicit Bounds
+* Bucket Counts (per configured boundaries)
+
+### An example of SDK implementation
+
+SDK expand combination of attribute keys/values of each measurement
+and direct each distinct combination to a different instance of an aggregator.
+
+```text
++------------------+  +-------------------------------------------------------------+
+| MeterProvider    |  | SDK                                                         |
+|   Meter A        |  |                     +----------------------+                |
+|     Instrument X |-----[Measurements]---->| MeasurementProcessor |                |
+|     Instrument Y |  |                     +-----------+----------+                |
+|     ...          |  |                                 |                           |
+|     ...          |  |                           [Measurements]                    |
++------------------+  |                                 |                           |
+                      |        SDK expand Measurements per View configuration       |
+                      |        (e.g. by attribute key/value pairs)                  |
+                      |                                 |                           |
+                      |                                 |"Aggregate"                |
+                      | Measurement #1:                 V                           |
+                      |                      +---------------------+                |
+                      |      B=Y ----------->| Aggregator #1 (B=Y) |---->+          |
+                      |                      +---------------------+     |          |
+                      |      A=X -------+                                |          |
+                      |                 |    +---------------------+     |          |
+                      | Measurment #2:  +--->| Aggregator #2 (A=X) |---->|          |
+                      |                 |    +---------------------+     |          |
+                      |      A=X -------+                                |          |
+                      |                      +---------------------+     |          |
+                      |      B=Z ----------->| Aggregator #3 (B=Z) |---->|          |
+                      |                      +---------------------+     |          |
+                      |                                                  |"Collect" |
+                      |                                                  |          |
+                      |                                              [Metrics]      |
+                      |                                                  |          |
+                      |                                        +---------V-------+  |
+                      |                                        | MetricProcessor |  |
+                      |                                        +---------+-------+  |
+                      |                                                  |          |
+                      |                                              [Metrics]      |
+                      |                                                  |          |
+                      |                                        +---------V-------+  |
+                      |                                        | MetricExporter  |=====>
+                      |                                        +-----------------+  |
+                      +-------------------------------------------------------------+
+```
 
 ## MetricProcessor
 
