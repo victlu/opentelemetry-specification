@@ -87,8 +87,6 @@ An `Aggregator` is a type of `MeasurementProcessor` and computes "aggregate"
 data from [Measurements](./api.md#measurement) and its `In-Memory State` into
 [Pre-Aggregated Metric](./datamodel.md#timeseries-model).
 
-Diagram:
-
 ```text
 
                  +---------------------+
@@ -112,33 +110,45 @@ An `Aggregator` MUST provide an interface to "aggregate" [Measurement](./api.md#
 data into its `In-Memory State`.
 
 An `Aggregator` MUST provide an interface to "collect" [Pre-Aggregated Metric](./datamodel.md#timeseries-model)
-data from its `In-Memory State`.
+data from its `In-Memory State`. The collect call should be treated as a
+stateful action and may reset in-memory state data. e.g. Resetting the time window
+for delta temporality instruments.
 
 An `Aggregator` MUST have read/write access to memory storage (`In-Memory
-State`) where it can store/retreive/manage its own internal state. SDK MUST
-provide consideration and control for memory availability and usage.
+State`) where it can store/retreive/manage its own internal state.
 
-An `Aggregator` MUST have access to or given the `View` configuration so it can
-be properly configure. e.g. For Monoticity and/or Temporality.
+Note: SDK SHOULD provide configuration and control for memory availability to
+optimize usage. Aggregators MUST log errors when memory limits are reached
+and/or data lost occurs due to memory mitigation strategy. (e.g dropping high
+cardinality attributes).
 
-SDK MUST provide aggregators to support the default aggregator configuration
-per instrument kind. e.g. A "Sum" aggregator to compute the sum "aggregate" for
-counter instruments and a "Histogram" aggregator for histogram instruments.
+An `Aggregator` MUST have access to or given the [View](./sdk.md#view)
+configuration so it can be properly configure. e.g. Configure a Sum aggregator
+for Monoticity and Temporality.
+
+SDK MUST route measurements to the configured aggregator/s. e.g. SDK
+expand a measurement's Attributes to key/value pair combinations, and route
+measurements for each distinct key/value pair combinations to zero or more
+aggregator/s.
+
+SDK MUST provide aggregators to support the default configured aggregator
+per instrument kind. e.g. Counter instruments default to a "Sum" aggregator
+configured for monotonic values.
 
 ### Last Value Aggregator
 
-The Last Value Aggregator supports the [Gauge Metric Point](./datamodel.md#gauge)
+The Last Value Aggregator collect data for the [Gauge Metric Point](./datamodel.md#gauge)
 and is default aggregator for the following instruments.
 
 * [Asynchronous Gauge](./api.md#asynchronous-gauge) instrument.
 
-Last Value Aggregator stores the following in memory:
+Last Value Aggregator maintains the following in memory:
 
-* Last Value (latest Measurement given.)
+* Last Value (latest Measurement given, avoid any time comparison.)
 
 ### Sum Aggregator
 
-The Sum Aggregator supports the [Sum Metric Point](./datamodel.md#sums)
+The Sum Aggregator collect data for the [Sum Metric Point](./datamodel.md#sums)
 and is default aggregator for the following instruments.
 
 * [Counter](./api.md#counter) instruments.
@@ -149,21 +159,21 @@ and is default aggregator for the following instruments.
 The Sum Aggregator MUST be configurable to support different Monoticity and/or
 Temporality.
 
-Sum Aggregator stores the following in memory:
+Sum Aggregator maintains the following in memory:
 
 * Time window (e.g. start time, end time)
 * Sum (sum of Measurements per Monoticity and Temporality configuration.)
 
 ### Histogram Aggregator
 
-The Histogram Aggregator supports the [Histogram Metric Point](./datamodel.md#histogram)
+The Histogram Aggregator collect data for the [Histogram Metric Point](./datamodel.md#histogram)
 and is default aggregator for the following instruments.
 
 * [Histogram](./api.md#histogram) instruments.
 
 The Histogram Aggregator MUST be configurable to support different Temporality.
 
-Histogram Aggregator stores the following in memory:
+Histogram Aggregator maintains the following in memory:
 
 * Time window (e.g. start time, end time)
 * Count
@@ -172,8 +182,9 @@ Histogram Aggregator stores the following in memory:
 
 ### An example of SDK implementation
 
-SDK expand combination of attribute keys/values of each measurement
-and direct each distinct combination to a different instance of an aggregator.
+SDK expand each Measurement's Attribute by the combination of key/value pairs.
+For each distinct combination, SDK will route to an instance of a configured
+aggregator.
 
 ```text
 +------------------+  +-------------------------------------------------------------+
@@ -185,20 +196,26 @@ and direct each distinct combination to a different instance of an aggregator.
 |     ...          |  |                           [Measurements]                    |
 +------------------+  |                                 |                           |
                       |        SDK expand Measurements per View configuration       |
-                      |        (e.g. by attribute key/value pairs)                  |
+                      |        (e.g. by Attribute key/value pairs)                  |
                       |                                 |                           |
                       |                                 |"Aggregate"                |
                       | Measurement #1:                 V                           |
                       |                      +---------------------+                |
                       |      B=Y ----------->| Aggregator #1 (B=Y) |---->+          |
+                      |                      | In-Memory State:    |     |          |
+                      |                      |   count=1           |     |          |
                       |                      +---------------------+     |          |
                       |      A=X -------+                                |          |
                       |                 |    +---------------------+     |          |
                       | Measurment #2:  +--->| Aggregator #2 (A=X) |---->|          |
+                      |                 |    | In-Memory State:    |     |          |
+                      |                 |    |   count=2           |     |          |
                       |                 |    +---------------------+     |          |
                       |      A=X -------+                                |          |
                       |                      +---------------------+     |          |
                       |      B=Z ----------->| Aggregator #3 (B=Z) |---->|          |
+                      |                      | In-Memory State:    |     |          |
+                      |                      |   count=1           |     |          |
                       |                      +---------------------+     |          |
                       |                                                  |"Collect" |
                       |                                                  |          |
@@ -211,7 +228,7 @@ and direct each distinct combination to a different instance of an aggregator.
                       |                                              [Metrics]      |
                       |                                                  |          |
                       |                                        +---------V-------+  |
-                      |                                        | MetricExporter  |=====>
+                      |                                        | MetricExporter  |=====> OTLP Collector
                       |                                        +-----------------+  |
                       +-------------------------------------------------------------+
 ```
