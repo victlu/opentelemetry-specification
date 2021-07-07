@@ -81,6 +81,47 @@ active span](../trace/api.md#context-interaction)).
 +------------------+
 ```
 
+### Aggregator
+
+An `Aggregator` compute "aggregate" data from [Measurements](./api.md#measurement)
+and its `In-Memory State` into [Pre-Aggregated Metric](./datamodel.md#timeseries-model)
+data.
+
+Diagram:
+
+```text
+
+               +---------------------+
+               | [Aggregator]        |
+               |                     |
+  Measurements |                     |
+  -------------> "Aggregate"         |
+               |      |              |
+               | +----V------------+ |
+               | | In-Memory State | |
+               | +-------+---------+ |
+               |         |           | Pre-Aggregated
+               |         V           | Metrics
+               |         "Collect"   +--------------->
+               |                     |
+               +---------------------+
+```
+
+An `Aggregator` MUST provide an interface to "aggregate" [Measurement](./api.md#measurement)
+data into its `In-Memory State`.
+
+An `Aggregator` MUST provide an interface to "collect" [Pre-Aggregated Metric](./datamodel.md#timeseries-model)
+data from its `In-memory state`. e.g. A collection for Delta temporality based
+instruments may reset/update its time range for next collection.
+
+SDK MUST provide aggregators to support the "default" aggregator configuration
+per instrument kind. e.g. A "Sum" aggregator to compute the sum "aggregate" for
+counter instruments and a "Histogram" aggregator for histogram instruments.
+
+An `Aggregator` MUST have access to or given the `View` configuration so it can
+properly configure itself. e.g. A set of attributes to maintain in its In-Memory
+State.
+
 ## MetricProcessor
 
 `MetricProcessor` is an interface which allows hooks for [pre-aggregated metrics
